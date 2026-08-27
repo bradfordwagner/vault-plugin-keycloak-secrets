@@ -60,8 +60,9 @@ func (b *backend) periodicFunc(ctx context.Context, req *logical.Request) error 
 	if err != nil {
 		return err
 	}
-	// Nothing to do when unconfigured or automatic rotation is disabled.
-	if cfg == nil || cfg.RotationPeriod <= 0 {
+	// Only attempt rotation once the admin connection is fully configured;
+	// skip otherwise. Also skip when automatic rotation is disabled (period 0).
+	if !cfg.isConfigured() || cfg.RotationPeriod <= 0 {
 		return nil
 	}
 

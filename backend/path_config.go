@@ -11,6 +11,11 @@ import (
 // connection config. There is one master-global admin credential per mount.
 const configStoragePath = "config"
 
+// defaultRotationPeriodSeconds is the automatic admin-secret self-rotation
+// interval applied when a config is first written without an explicit
+// rotation_period: 1 day.
+const defaultRotationPeriodSeconds = 86400
+
 // config holds the connection details and admin credentials used to talk to
 // Keycloak's Admin REST API. A single master-global admin client (living in the
 // auth realm) administers every other realm served by this mount.
@@ -26,6 +31,13 @@ type config struct {
 	// LastRotated is the unix-seconds timestamp of the last successful admin
 	// secret rotation; set by rotation, not by humans.
 	LastRotated int64 `json:"last_rotated"`
+}
+
+// isConfigured reports whether the mount has the admin connection details
+// needed to talk to Keycloak. Automatic rotation (and any other admin
+// operation) must be skipped until this is true.
+func (c *config) isConfigured() bool {
+	return c != nil && c.ServerURL != "" && c.ClientID != "" && c.ClientSecret != ""
 }
 
 // pathConfig defines the mount-level config endpoint.
@@ -59,7 +71,8 @@ func (b *backend) pathConfig() *framework.Path {
 			},
 			"rotation_period": {
 				Type:        framework.TypeDurationSecond,
-				Description: "Automatic admin secret self-rotation interval in seconds. 0 disables automatic rotation.",
+				Default:     defaultRotationPeriodSeconds,
+				Description: "Automatic admin secret self-rotation interval. Defaults to 24h (1d) when the mount is first configured; set to 0 to disable automatic rotation.",
 			},
 		},
 		ExistenceCheck: b.configExists,
@@ -104,7 +117,8 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	if err != nil {
 		return nil, err
 	}
-	if cfg == nil {
+	isCreate := cfg == nil
+	if isCreate {
 		cfg = &config{}
 	}
 
@@ -125,6 +139,10 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if v, ok := data.GetOk("rotation_period"); ok {
 		cfg.RotationPeriod = int64(v.(int))
+	} else if isCreate {
+		// Default automatic self-rotation to 1 day on initial configuration.
+		// On update, an omitted rotation_period leaves the stored value intact.
+		cfg.RotationPeriod = defaultRotationPeriodSeconds
 	}
 
 	if cfg.AuthRealm == "" {

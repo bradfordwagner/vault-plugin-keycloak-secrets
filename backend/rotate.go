@@ -74,7 +74,11 @@ func (b *backend) pathConfigRotate() *framework.Path {
 	return &framework.Path{
 		Pattern: "config/rotate",
 		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.CreateOperation: &framework.PathOperation{Callback: b.pathConfigRotateWrite},
+			// Action endpoint: UpdateOperation only. `vault write config/rotate`
+			// routes here (with no CreateOperation registered, all writes map to
+			// Update). Registering CreateOperation would require an ExistenceCheck
+			// or the framework panics at init: "Pattern config/rotate defines a
+			// CreateOperation but no ExistenceCheck".
 			logical.UpdateOperation: &framework.PathOperation{Callback: b.pathConfigRotateWrite},
 		},
 		HelpSynopsis:    "Rotate the plugin's own Keycloak admin client_secret.",
