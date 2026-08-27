@@ -1,0 +1,94 @@
+# Taskfile.yml — developer + release tooling for vault-plugin-keycloak-secrets.
+#
+# Two-loop delivery model:
+#
+#   * INNER LOOP (this Taskfile's `dev:push`): the fast local dev loop. It
+#     BYPASSES the in-cluster plugin manager entirely — it cross-compiles the
+#     binary and copies it straight onto the Vault pod, then registers +
+#     reloads it in place. Seconds per iteration.
+#
+#   * INTEGRATION / PRODUCTION: a real, public GoReleaser GitHub release (see
+#     .goreleaser.yaml). The in-cluster plugin manager fetches the per-OS/arch
+#     release asset by URL over HTTP and verifies its sha256. `dev:push` does
+#     none of that; it is dev-only.
+#
+# Kube policy: KUBECONFIG and CONTEXT are MANDATORY. Every kubectl invocation
+# passes explicit --kubeconfig/--context so we never touch ambient kube config
+# and never risk targeting the wrong cluster. Both vars are required and fail
+# loudly if unset.
+version: '3'
+
+vars:
+  PLUGIN: vault-plugin-keycloak-secrets
+  # Required: no defaults. Explicit kubeconfig + context is non-negotiable.
+  KUBECONFIG: '{{.KUBECONFIG}}'
+  CONTEXT: '{{.CONTEXT}}'
+  VAULT_POD: vault-0
+  VAULT_NS: vault
+  VAULT_CONTAINER: vault
+  PLUGIN_DIR: /vault/plugins
+  MOUNT: keycloak
+  # k3d node arch. amd64/WSL2 devs: run with ARCH=amd64.
+  ARCH: arm64
+
+tasks:
+  build:
+    desc: Cross-compile the plugin binary for the Linux Vault pod.
+    cmds:
+      - GOOS=linux GOARCH={{.ARCH}} CGO_ENABLED=0 go build -o dist/{{.PLUGIN}}-linux ./cmd/{{.PLUGIN}}
+
+  dev:push:
+    desc: FAST INNER LOOP — copy the fresh binary onto the Vault pod, register + reload (bypasses the plugin manager).
+    deps: [build]
+    requires:
+      vars: [KUBECONFIG, CONTEXT]
+    # NOTE: the vault CLI inside the pod needs VAULT_TOKEN and VAULT_ADDR in its
+    # env for `vault plugin register/reload` below (dev-only; the operator
+    # supplies auth). On FIRST use you must also enable the mount once:
+    #   task dev:enable KUBECONFIG=... CONTEXT=...
+    cmds:
+      # 1. Copy freshly-built binary onto the pod.
+      - kubectl --kubeconfig {{.KUBECONFIG}} --context {{.CONTEXT}} -n {{.VAULT_NS}} cp dist/{{.PLUGIN}}-linux {{.VAULT_POD}}:{{.PLUGIN_DIR}}/{{.PLUGIN}} -c {{.VAULT_CONTAINER}}
+      # 2-4. Compute the on-pod sha256, then register + reload the plugin.
+      - |
+        SHA=$(kubectl --kubeconfig {{.KUBECONFIG}} --context {{.CONTEXT}} -n {{.VAULT_NS}} exec {{.VAULT_POD}} -c {{.VAULT_CONTAINER}} -- sha256sum {{.PLUGIN_DIR}}/{{.PLUGIN}} | cut -d' ' -f1)
+        echo "on-pod sha256: $SHA"
+        kubectl --kubeconfig {{.KUBECONFIG}} --context {{.CONTEXT}} -n {{.VAULT_NS}} exec {{.VAULT_POD}} -c {{.VAULT_CONTAINER}} -- vault plugin register -sha256=$SHA -command={{.PLUGIN}} secret {{.PLUGIN}}
+        kubectl --kubeconfig {{.KUBECONFIG}} --context {{.CONTEXT}} -n {{.VAULT_NS}} exec {{.VAULT_POD}} -c {{.VAULT_CONTAINER}} -- vault plugin reload -plugin {{.PLUGIN}}
+
+  dev:enable:
+    desc: One-time — enable the secrets engine mount at path {{.MOUNT}}.
+    requires:
+      vars: [KUBECONFIG, CONTEXT]
+    # Idempotent-ish: errors if the path is already mounted, which is fine.
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} --context {{.CONTEXT}} -n {{.VAULT_NS}} exec {{.VAULT_POD}} -c {{.VAULT_CONTAINER}} -- vault secrets enable -path={{.MOUNT}} {{.PLUGIN}}
+
+  dev:logs:
+    desc: Tail the Vault container logs.
+    requires:
+      vars: [KUBECONFIG, CONTEXT]
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} --context {{.CONTEXT}} -n {{.VAULT_NS}} logs {{.VAULT_POD}} -c {{.VAULT_CONTAINER}} -f
+
+  release:snapshot:
+    desc: Build release artifacts locally without publishing (GoReleaser snapshot).
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  image:
+    desc: Build the carrier OCI image locally for the current arch (CI builds multi-arch on tags).
+    vars:
+      TAG: '{{.TAG | default "dev"}}'
+    cmds:
+      - docker build -t {{.PLUGIN}}:{{.TAG}} --build-arg VERSION={{.TAG}} .
+
+  test:
+    desc: Run the Go test suite.
+    cmds:
+      - go test ./...
+
+  fmt:
+    desc: Format all Go source.
+    cmds:
+      - gofmt -w .

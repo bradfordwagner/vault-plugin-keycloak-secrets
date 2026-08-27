@@ -1,0 +1,8 @@
+# GoReleaser + local build output
+/dist/
+
+# Stray local build of the binary
+/vault-plugin-keycloak-secrets
+
+# OS cruft
+.DS_Store
