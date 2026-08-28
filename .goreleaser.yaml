@@ -1,0 +1,53 @@
+# GoReleaser config for vault-plugin-keycloak-secrets.
+#
+# The in-cluster plugin manager consumes what this produces: it fetches the
+# per-OS/arch binary — unpacked from the tar.gz archives below — from the
+# GitHub release asset URL over HTTP, and verifies the sha256 of the EXTRACTED
+# binary before registering it with Vault. (The fast inner dev loop in
+# Taskfile.yml's `dev:push` bypasses all of this and copies the binary straight
+# onto the pod.)
+version: 2
+
+project_name: vault-plugin-keycloak-secrets
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/vault-plugin-keycloak-secrets
+    binary: vault-plugin-keycloak-secrets
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    # BINARY-ONLY archive (no README/LICENSE). The plugin manager's HTTP fetcher
+    # (internal/fetch: extractTar -> selectEntry) requires the archive to contain
+    # exactly ONE regular file when the mount's `source.binary` is unset — a
+    # second file (GoReleaser's default README/LICENSE inclusion) makes it error
+    # "archive has N files; set source.binary to select one". `none*` matches
+    # nothing, which replaces the default file set with an empty one.
+    files:
+      - none*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-dev-{{ .ShortCommit }}'
+
+release:
+  github:
+    owner: bradfordwagner
+    name: vault-plugin-keycloak-secrets
+  prerelease: auto
