@@ -15,20 +15,16 @@ func rolesStoragePrefix(realm string) string {
 	return "realm/" + realm + "/roles/"
 }
 
-// keycloakRole is a client template. Reading realm/<realm>/creds/<name> mints a
-// new Keycloak client from these settings.
+// keycloakRole references an existing template client to clone. Reading
+// realm/<realm>/creds/<name> clones the client identified by SourceClientID
+// (copying its configuration and service-account role mappings), forces the
+// clone to be confidential, and returns the clone's credentials.
 type keycloakRole struct {
-	TTL                       time.Duration `json:"ttl"`
-	MaxTTL                    time.Duration `json:"max_ttl"`
-	ClientIDPrefix            string        `json:"client_id_prefix"`
-	ServiceAccountsEnabled    bool          `json:"service_accounts_enabled"`
-	StandardFlowEnabled       bool          `json:"standard_flow_enabled"`
-	DirectAccessGrantsEnabled bool          `json:"direct_access_grants_enabled"`
-	PublicClient              bool          `json:"public_client"`
-	RedirectURIs              []string      `json:"redirect_uris"`
-	DefaultClientScopes       []string      `json:"default_client_scopes"`
-	OptionalClientScopes      []string      `json:"optional_client_scopes"`
-	RealmRoles                []string      `json:"realm_roles"`
+	TTL            time.Duration `json:"ttl"`
+	MaxTTL         time.Duration `json:"max_ttl"`
+	SourceClientID string        `json:"source_client_id"`
+	RealmRoles     []string      `json:"realm_roles"` // extra realm roles granted to the clone's service account, in addition to those copied from the source client
+	SyncUpstream   bool          `json:"sync_upstream"`
 }
 
 // pathRoles defines the realm/<realm>/roles/<name> endpoint.
@@ -52,44 +48,17 @@ func (b *backend) pathRoles() *framework.Path {
 				Type:        framework.TypeDurationSecond,
 				Description: "Maximum lease TTL for clients issued from this role.",
 			},
-			"client_id_prefix": {
+			"source_client_id": {
 				Type:        framework.TypeString,
-				Description: "Prefix for generated client IDs. Defaults to vault-<role>-.",
-			},
-			"service_accounts_enabled": {
-				Type:        framework.TypeBool,
-				Default:     true,
-				Description: "Enable the client's service account.",
-			},
-			"standard_flow_enabled": {
-				Type:        framework.TypeBool,
-				Default:     false,
-				Description: "Enable the standard (authorization code) flow.",
-			},
-			"direct_access_grants_enabled": {
-				Type:        framework.TypeBool,
-				Description: "Enable direct access grants (resource owner password flow).",
-			},
-			"public_client": {
-				Type:        framework.TypeBool,
-				Default:     false,
-				Description: "Create a public (non-confidential) client. Public clients have no secret.",
-			},
-			"redirect_uris": {
-				Type:        framework.TypeCommaStringSlice,
-				Description: "Valid redirect URIs for the client.",
-			},
-			"default_client_scopes": {
-				Type:        framework.TypeCommaStringSlice,
-				Description: "Default client scopes to assign.",
-			},
-			"optional_client_scopes": {
-				Type:        framework.TypeCommaStringSlice,
-				Description: "Optional client scopes to assign.",
+				Description: "clientId of the existing template client to clone for each credential. Required.",
 			},
 			"realm_roles": {
 				Type:        framework.TypeCommaStringSlice,
-				Description: "Realm roles to grant to the client's service account.",
+				Description: "Extra realm roles granted to the clone's service account, in addition to those copied from the source client.",
+			},
+			"sync_upstream": {
+				Type:        framework.TypeBool,
+				Description: "When true, clones issued from this role are updated to match the source (template) client whenever the source client changes in Keycloak. Each clone's client_id and client_secret are preserved, so existing leases keep working.",
 			},
 		},
 		ExistenceCheck: b.rolesExists,
@@ -99,8 +68,8 @@ func (b *backend) pathRoles() *framework.Path {
 			logical.ReadOperation:   &framework.PathOperation{Callback: b.pathRolesRead},
 			logical.DeleteOperation: &framework.PathOperation{Callback: b.pathRolesDelete},
 		},
-		HelpSynopsis:    "Manage roles (client templates) for the Keycloak secrets engine.",
-		HelpDescription: "This endpoint manages roles. A role is a template describing the Keycloak client that will be created when reading realm/<realm>/creds/<name>.",
+		HelpSynopsis:    "Manage roles for the Keycloak secrets engine.",
+		HelpDescription: "This endpoint manages roles. A role references an existing template client via source_client_id; reading realm/<realm>/creds/<name> clones that client and returns the clone's credentials.",
 	}
 }
 
@@ -175,38 +144,18 @@ func (b *backend) pathRolesWrite(ctx context.Context, req *logical.Request, data
 	if v, ok := data.GetOk("max_ttl"); ok {
 		role.MaxTTL = time.Duration(v.(int)) * time.Second
 	}
-	if v, ok := data.GetOk("client_id_prefix"); ok {
-		role.ClientIDPrefix = v.(string)
-	}
-	if v, ok := data.GetOk("service_accounts_enabled"); ok {
-		role.ServiceAccountsEnabled = v.(bool)
-	} else if req.Operation == logical.CreateOperation {
-		role.ServiceAccountsEnabled = data.Get("service_accounts_enabled").(bool)
-	}
-	if v, ok := data.GetOk("standard_flow_enabled"); ok {
-		role.StandardFlowEnabled = v.(bool)
-	} else if req.Operation == logical.CreateOperation {
-		role.StandardFlowEnabled = data.Get("standard_flow_enabled").(bool)
-	}
-	if v, ok := data.GetOk("direct_access_grants_enabled"); ok {
-		role.DirectAccessGrantsEnabled = v.(bool)
-	}
-	if v, ok := data.GetOk("public_client"); ok {
-		role.PublicClient = v.(bool)
-	} else if req.Operation == logical.CreateOperation {
-		role.PublicClient = data.Get("public_client").(bool)
-	}
-	if v, ok := data.GetOk("redirect_uris"); ok {
-		role.RedirectURIs = v.([]string)
-	}
-	if v, ok := data.GetOk("default_client_scopes"); ok {
-		role.DefaultClientScopes = v.([]string)
-	}
-	if v, ok := data.GetOk("optional_client_scopes"); ok {
-		role.OptionalClientScopes = v.([]string)
+	if v, ok := data.GetOk("source_client_id"); ok {
+		role.SourceClientID = v.(string)
 	}
 	if v, ok := data.GetOk("realm_roles"); ok {
 		role.RealmRoles = v.([]string)
+	}
+	if v, ok := data.GetOk("sync_upstream"); ok {
+		role.SyncUpstream = v.(bool)
+	}
+
+	if req.Operation == logical.CreateOperation && role.SourceClientID == "" {
+		return logical.ErrorResponse("source_client_id is required"), nil
 	}
 
 	if role.MaxTTL > 0 && role.TTL > role.MaxTTL {
@@ -235,17 +184,11 @@ func (b *backend) pathRolesRead(ctx context.Context, req *logical.Request, data 
 	}
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"ttl":                          int64(role.TTL.Seconds()),
-			"max_ttl":                      int64(role.MaxTTL.Seconds()),
-			"client_id_prefix":             role.ClientIDPrefix,
-			"service_accounts_enabled":     role.ServiceAccountsEnabled,
-			"standard_flow_enabled":        role.StandardFlowEnabled,
-			"direct_access_grants_enabled": role.DirectAccessGrantsEnabled,
-			"public_client":                role.PublicClient,
-			"redirect_uris":                role.RedirectURIs,
-			"default_client_scopes":        role.DefaultClientScopes,
-			"optional_client_scopes":       role.OptionalClientScopes,
-			"realm_roles":                  role.RealmRoles,
+			"ttl":              int64(role.TTL.Seconds()),
+			"max_ttl":          int64(role.MaxTTL.Seconds()),
+			"source_client_id": role.SourceClientID,
+			"realm_roles":      role.RealmRoles,
+			"sync_upstream":    role.SyncUpstream,
 		},
 	}, nil
 }

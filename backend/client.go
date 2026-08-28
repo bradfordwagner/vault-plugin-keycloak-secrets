@@ -51,6 +51,19 @@ type roleRepresentation struct {
 	Name string `json:"name"`
 }
 
+// roleMappings is the composite role-mapping view Keycloak returns for a user
+// at /users/{id}/role-mappings.
+type roleMappings struct {
+	RealmMappings  []roleRepresentation         `json:"realmMappings"`
+	ClientMappings map[string]clientRoleMapping `json:"clientMappings"`
+}
+
+type clientRoleMapping struct {
+	ID       string               `json:"id"`     // client internal (UUID) id
+	Client   string               `json:"client"` // clientId
+	Mappings []roleRepresentation `json:"mappings"`
+}
+
 // newKeycloakClient builds a client from the stored config for the given target
 // realm, wiring a custom TLS pool when a CA certificate is provided. The admin
 // token is always minted against the config's auth realm (default master), while
@@ -324,4 +337,157 @@ func (c *keycloakClient) regenerateClientSecret(ctx context.Context, token, inte
 		return "", fmt.Errorf("keycloak regenerate client-secret response contained no value")
 	}
 	return out.Value, nil
+}
+
+// getClientRaw fetches a client's full representation by its internal (UUID) id,
+// preserving every field verbatim in a generic map so it can be used as the
+// basis for a clone.
+func (c *keycloakClient) getClientRaw(ctx context.Context, token, internalID string) (map[string]interface{}, error) {
+	reqURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s", c.serverURL, c.targetRealm, internalID)
+	resp, body, err := c.doAdmin(ctx, token, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("keycloak get client raw failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var out map[string]interface{}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("failed to parse client raw response: %w", err)
+	}
+	return out, nil
+}
+
+// createClientRaw creates a client from a full generic representation and returns
+// its internal id, parsed from the Location header.
+func (c *keycloakClient) createClientRaw(ctx context.Context, token string, raw map[string]interface{}) (string, error) {
+	reqURL := fmt.Sprintf("%s/admin/realms/%s/clients", c.serverURL, c.targetRealm)
+	resp, body, err := c.doAdmin(ctx, token, http.MethodPost, reqURL, raw)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("keycloak create client raw failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", fmt.Errorf("keycloak create client returned no Location header")
+	}
+	id := loc[strings.LastIndex(loc, "/")+1:]
+	if id == "" || id == loc {
+		return "", fmt.Errorf("could not parse client id from Location header %q", loc)
+	}
+	return id, nil
+}
+
+// updateClientRaw replaces a client's representation via PUT. Because the body
+// carries no "secret" field (buildSyncRepresentation strips it), Keycloak
+// preserves the client's existing secret across the update.
+func (c *keycloakClient) updateClientRaw(ctx context.Context, token, internalID string, raw map[string]interface{}) error {
+	reqURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s", c.serverURL, c.targetRealm, internalID)
+	resp, body, err := c.doAdmin(ctx, token, http.MethodPut, reqURL, raw)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("keycloak update client failed: status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// userRoleMappings returns the composite realm and client role mappings for a
+// user. A 200 with empty or absent maps yields a zero-value struct, not an
+// error.
+func (c *keycloakClient) userRoleMappings(ctx context.Context, token, userID string) (*roleMappings, error) {
+	reqURL := fmt.Sprintf("%s/admin/realms/%s/users/%s/role-mappings", c.serverURL, c.targetRealm, userID)
+	resp, body, err := c.doAdmin(ctx, token, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("keycloak get user role-mappings failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var out roleMappings
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("failed to parse user role-mappings response: %w", err)
+	}
+	return &out, nil
+}
+
+// assignClientRoles grants the given client roles to a user for the client
+// identified by its internal (UUID) id. It is a no-op when roles is empty.
+func (c *keycloakClient) assignClientRoles(ctx context.Context, token, userID, clientInternalID string, roles []roleRepresentation) error {
+	if len(roles) == 0 {
+		return nil
+	}
+	reqURL := fmt.Sprintf("%s/admin/realms/%s/users/%s/role-mappings/clients/%s", c.serverURL, c.targetRealm, userID, clientInternalID)
+	resp, body, err := c.doAdmin(ctx, token, http.MethodPost, reqURL, roles)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("keycloak assign client roles failed: status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// buildCloneRepresentation returns a new client representation derived from a
+// source client's raw representation, suitable for POSTing as a brand-new
+// client. It strips server-assigned / non-creatable fields and FORCES the clone
+// to be a confidential client.
+func buildCloneRepresentation(src map[string]interface{}, cloneClientID string) map[string]interface{} {
+	clone := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		clone[k] = v
+	}
+
+	// Strip server-assigned / non-creatable fields.
+	delete(clone, "id")
+	delete(clone, "secret")
+	delete(clone, "registrationAccessToken")
+	delete(clone, "authorizationSettings")
+
+	clone["clientId"] = cloneClientID
+
+	// Force confidential client.
+	clone["publicClient"] = false
+	clone["clientAuthenticatorType"] = "client-secret"
+
+	clone["enabled"] = true
+
+	// Defensively strip server-assigned ids from any protocol mappers. Each
+	// mapper map is copied first so src's mappers are left untouched.
+	if mappers, ok := clone["protocolMappers"].([]interface{}); ok {
+		cloned := make([]interface{}, len(mappers))
+		for i, m := range mappers {
+			if mapper, ok := m.(map[string]interface{}); ok {
+				cp := make(map[string]interface{}, len(mapper))
+				for k, v := range mapper {
+					cp[k] = v
+				}
+				delete(cp, "id")
+				cloned[i] = cp
+			} else {
+				cloned[i] = m
+			}
+		}
+		clone["protocolMappers"] = cloned
+	}
+
+	return clone
+}
+
+// buildSyncRepresentation derives the representation used to UPDATE an existing
+// clone so it tracks its source (template) client. It reuses the clone-build
+// rules (force confidential, strip secret so Keycloak keeps the clone's current
+// secret, strip protocol-mapper ids) but pins the clone's own clientId and
+// internal id so the PUT targets the clone in place rather than minting a new
+// client. src is not mutated.
+func buildSyncRepresentation(src map[string]interface{}, cloneClientID, cloneInternalID string) map[string]interface{} {
+	rep := buildCloneRepresentation(src, cloneClientID)
+	rep["id"] = cloneInternalID
+	return rep
 }

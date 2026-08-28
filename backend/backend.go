@@ -60,23 +60,30 @@ func (b *backend) periodicFunc(ctx context.Context, req *logical.Request) error 
 	if err != nil {
 		return err
 	}
-	// Only attempt rotation once the admin connection is fully configured;
-	// skip otherwise. Also skip when automatic rotation is disabled (period 0).
-	if !cfg.isConfigured() || cfg.RotationPeriod <= 0 {
+	// Nothing to do until the admin connection is fully configured.
+	if !cfg.isConfigured() {
 		return nil
 	}
 
-	// A freshly seeded config has LastRotated == 0, so the first periodic tick
+	// Automatic admin-secret rotation, only when a positive period is set. A
+	// freshly seeded config has LastRotated == 0, so the first periodic tick
 	// rotates immediately. This is intended: it purges the human-seeded secret
 	// as soon as possible.
-	if time.Now().Unix()-cfg.LastRotated >= cfg.RotationPeriod {
+	if cfg.RotationPeriod > 0 && time.Now().Unix()-cfg.LastRotated >= cfg.RotationPeriod {
 		if err := b.rotateAdminSecret(ctx, req.Storage); err != nil {
 			// Do not return the error: Vault treats periodic failures as fatal/noisy,
 			// and Keycloak remains the source of truth. Warn and move on.
 			b.Logger().Warn("automatic admin secret rotation failed", "error", err)
-			return nil
+		} else {
+			b.Logger().Info("rotated admin secret", "next_after_seconds", cfg.RotationPeriod)
 		}
-		b.Logger().Info("rotated admin secret", "next_after_seconds", cfg.RotationPeriod)
+	}
+
+	// Propagate source (template) client changes onto live clones for roles that
+	// opt in via sync_upstream. Best-effort: Keycloak is the source of truth, so a
+	// sync failure must never make the periodic tick fail.
+	if err := b.syncUpstream(ctx, req.Storage); err != nil {
+		b.Logger().Warn("upstream clone sync failed", "error", err)
 	}
 	return nil
 }
@@ -118,10 +125,18 @@ master) and administers every other realm. Set rotation_period on the config to
 have the plugin automatically self-rotate its own admin client_secret on a
 schedule; the config/rotate endpoint remains a manual break-glass trigger.
 
-Define one or more roles (client templates) at realm/<realm>/roles/<name>. Each
-read of realm/<realm>/creds/<name> creates a new confidential client (with a
-service account) in <realm> and returns its client_id and client_secret. When
-the Vault lease expires or is revoked, the client is deleted from Keycloak.
+Define one or more roles at realm/<realm>/roles/<name>. A role references an
+existing template client in <realm> via source_client_id. Each read of
+realm/<realm>/creds/<name> CLONES that template client (copying its
+configuration and its service-account role mappings), forces the clone to be a
+confidential client, names it <source_client_id>-vkp-<uuid>, and returns the
+clone's client_id and client_secret. When the Vault lease expires or is revoked,
+the clone is deleted from Keycloak.
+
+Set sync_upstream=true on a role to keep its live clones tracking the source
+client: a background pass detects when the source client changes in Keycloak and
+updates every outstanding clone to match, preserving each clone's client_id and
+client_secret so existing leases keep working.
 
 List realms that have roles defined at realm/ and a realm's roles at
 realm/<realm>/roles/.

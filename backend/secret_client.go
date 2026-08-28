@@ -65,6 +65,15 @@ func (b *backend) secretClientRevoke(ctx context.Context, req *logical.Request, 
 	if err := client.deleteClient(ctx, token, internalID); err != nil {
 		return nil, fmt.Errorf("failed to delete keycloak client: %w", err)
 	}
+
+	// Best-effort: drop this clone from the upstream-sync index. The Keycloak
+	// client is already gone, so a stale index entry is harmless; log and move on.
+	if roleName, ok := req.Secret.InternalData["role"].(string); ok && roleName != "" {
+		if err := deleteCloneRecord(ctx, req.Storage, realm, roleName, internalID); err != nil {
+			b.Logger().Warn("failed to delete clone index record on revoke",
+				"realm", realm, "role", roleName, "internal_id", internalID, "error", err)
+		}
+	}
 	return nil, nil
 }
 

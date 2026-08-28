@@ -21,11 +21,20 @@ realm's built-in management client, named `<realm>-realm` (these clients live in
 `master`, one per realm). The engine needs exactly three fine-grained roles from
 each managed realm's `<realm>-realm` client:
 
-| role            | why the engine needs it                                        |
-| --------------- | -------------------------------------------------------------- |
-| `manage-clients`| create / read client-secret / delete the dynamic clients      |
-| `manage-users`  | read the client's service-account user, map realm roles to it |
-| `view-realm`    | resolve realm roles by name before mapping them               |
+| role            | why the engine needs it                                                          |
+| --------------- | ------------------------------------------------------------------------------- |
+| `manage-clients`| read the template client's full representation, create / read client-secret / update / delete the cloned clients |
+| `manage-users`  | read the template client's service-account role mappings, map realm + client roles onto the clone's service account |
+| `view-realm`    | resolve extra realm roles by name before mapping them                            |
+
+Because `creds` reads now **clone an existing template client** (`source_client_id`),
+the engine additionally reads that template client's representation and its
+service-account role mappings and copies both (realm-role and client-role mappings)
+onto each clone's service account. When a role sets `sync_upstream=true`, the
+background sync pass additionally issues client **UPDATEs** (`PUT`) against each
+live clone to re-apply the template's configuration and re-copy its
+service-account role mappings. All of this stays within the same three per-realm
+roles above — no extra grants are required.
 
 Grant these per managed realm. Do **not** grant the master `admin` composite role
 (it can do everything in every realm) unless you deliberately accept that blast
