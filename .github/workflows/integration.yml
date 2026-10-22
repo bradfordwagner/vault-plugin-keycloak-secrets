@@ -50,3 +50,14 @@ jobs:
       - name: Stop stack
         if: always()
         run: docker compose -f integration/docker-compose.yml down -v
+
+  # Single stable check for branch protection. Matrix job names change whenever
+  # a version is bumped, so main requires this job instead of each cell.
+  integration-ok:
+    runs-on: ubuntu-latest
+    needs: integration
+    if: always()
+    name: integration ok
+    steps:
+      - name: All matrix jobs passed
+        run: test "${{ needs.integration.result }}" = success
