@@ -54,7 +54,7 @@ type harness struct {
 	adminSec string // seed secret for the engine's admin client
 }
 
-// composeURL returns the localhost URL of a compose service's container port.
+// composeURL returns the loopback URL of a compose service's container port.
 // The compose file binds host ports at random, so they are looked up here.
 func composeURL(t *testing.T, service, port string) string {
 	t.Helper()
@@ -67,7 +67,8 @@ func composeURL(t *testing.T, service, port string) string {
 	if i < 0 || i == len(addr)-1 {
 		t.Fatalf("docker compose port %s %s: unexpected output %q", service, port, addr)
 	}
-	return "http://localhost:" + addr[i+1:]
+	// The compose file binds 127.0.0.1 only; "localhost" may resolve to ::1 first.
+	return "http://127.0.0.1:" + addr[i+1:]
 }
 
 func newHarness(t *testing.T) *harness {
@@ -79,17 +80,20 @@ func newHarness(t *testing.T) *harness {
 	}
 	kcURL = strings.TrimRight(kcURL, "/")
 
+	// The test unmounts and remounts the engine, so it must never follow an
+	// ambient VAULT_ADDR / VAULT_TOKEN / VAULT_NAMESPACE that points at a real
+	// Vault. Only the INTEGRATION_* overrides select a different target.
 	vcfg := api.DefaultConfig()
-	if os.Getenv("VAULT_ADDR") == "" {
+	vcfg.Address = os.Getenv("INTEGRATION_VAULT_ADDR")
+	if vcfg.Address == "" {
 		vcfg.Address = composeURL(t, "vault", "8200")
 	}
 	vc, err := api.NewClient(vcfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if os.Getenv("VAULT_TOKEN") == "" {
-		vc.SetToken("root")
-	}
+	vc.SetToken(env("INTEGRATION_VAULT_TOKEN", "root"))
+	vc.ClearNamespace()
 
 	return &harness{
 		kc: &kcAdmin{

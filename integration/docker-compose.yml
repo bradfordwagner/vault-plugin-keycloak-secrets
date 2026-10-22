@@ -9,10 +9,10 @@
 # VAULT_VERSION / KEYCLOAK_VERSION.
 #
 # Vault reaches Keycloak as http://keycloak:8080 on the compose network; the
-# test process reaches both on localhost through host ports Docker picks at
+# test process reaches both on 127.0.0.1 through host ports Docker picks at
 # random, so nothing collides with services already bound locally. The test
-# looks them up with `docker compose port` unless KEYCLOAK_URL / VAULT_ADDR are
-# set.
+# looks them up with `docker compose port` unless KEYCLOAK_URL /
+# INTEGRATION_VAULT_ADDR are set (ambient VAULT_ADDR / VAULT_TOKEN are ignored).
 name: vkp-integration
 
 services:

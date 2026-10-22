@@ -23,18 +23,41 @@ type kcAdmin struct {
 	user     string
 	password string
 	http     *http.Client
+
+	tok    string    // cached admin access token
+	tokExp time.Time // when to stop reusing tok
 }
 
-// token mints a fresh admin token for every call. Master-realm tokens live for
-// 60s by default, which is shorter than a full test run.
+// token returns a cached admin token, minting a new one shortly before the
+// cached one expires. Master-realm tokens live for 60s by default, which is
+// shorter than a full test run.
 func (k *kcAdmin) token(ctx context.Context) (string, error) {
-	form := url.Values{
+	if k.tok != "" && time.Now().Before(k.tokExp) {
+		return k.tok, nil
+	}
+	status, body, err := postToken(ctx, k.http, k.baseURL, "master", url.Values{
 		"grant_type": {"password"},
 		"client_id":  {"admin-cli"},
 		"username":   {k.user},
 		"password":   {k.password},
+	})
+	if err != nil {
+		return "", err
 	}
-	return grantToken(ctx, k.http, k.baseURL, "master", form)
+	if status != http.StatusOK {
+		return "", fmt.Errorf("admin token grant: status %d: %s", status, body)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	k.tok = out.AccessToken
+	// Refresh 10s early so a token never expires mid-request.
+	k.tokExp = time.Now().Add(time.Duration(out.ExpiresIn)*time.Second - 10*time.Second)
+	return k.tok, nil
 }
 
 // do issues an admin call and returns the status code and body. in, when set,

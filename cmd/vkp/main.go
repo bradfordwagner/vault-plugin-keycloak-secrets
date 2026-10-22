@@ -1,9 +1,10 @@
 // Command vkp issues, renews and revokes dynamic Keycloak client credentials
 // from a vault-plugin-keycloak-secrets mount. It reads VAULT_ADDR, VAULT_TOKEN
-// and the other standard VAULT_* variables like the vault CLI does.
+// and the other standard VAULT_* variables like the vault CLI does, and falls
+// back to the token `vault login` stores in ~/.vault-token.
 //
 //	vkp issue  -realm my-realm -role my-role [-mount keycloak]
-//	vkp renew  [-increment 1h] <lease_id>
+//	vkp renew  [-increment 1h] <lease_id>   (flags before lease_id)
 //	vkp revoke <lease_id>
 //
 // issue prints the credentials as JSON on stdout.
@@ -15,6 +16,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/vault/api"
@@ -24,8 +27,8 @@ import (
 
 const usage = `usage:
   vkp issue  -realm <realm> -role <role> [-mount keycloak]
-  vkp renew  [-mount keycloak] [-increment 1h] <lease_id>
-  vkp revoke [-mount keycloak] <lease_id>`
+  vkp renew  [-increment 1h] <lease_id>
+  vkp revoke <lease_id>`
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
@@ -44,7 +47,7 @@ func run(ctx context.Context, args []string) error {
 	mount := fs.String("mount", "keycloak", "engine mount path")
 	realm := fs.String("realm", "", "Keycloak realm (issue)")
 	role := fs.String("role", "", "engine role name (issue)")
-	increment := fs.Duration("increment", 0, "renew increment; 0 uses the role ttl (renew)")
+	increment := fs.Duration("increment", 0, "renew increment sent to Vault; the engine currently resets to the role ttl (renew)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -52,6 +55,15 @@ func run(ctx context.Context, args []string) error {
 	vc, err := api.NewClient(api.DefaultConfig())
 	if err != nil {
 		return err
+	}
+	if vc.Token() == "" {
+		// The api package reads VAULT_TOKEN only; the vault CLI also falls back
+		// to the token helper file written by `vault login`.
+		if home, err := os.UserHomeDir(); err == nil {
+			if b, err := os.ReadFile(filepath.Join(home, ".vault-token")); err == nil {
+				vc.SetToken(strings.TrimSpace(string(b)))
+			}
+		}
 	}
 	c := client.New(vc, *mount)
 

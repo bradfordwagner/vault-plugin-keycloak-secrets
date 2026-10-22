@@ -75,8 +75,9 @@ func (c *Client) Issue(ctx context.Context, realm, role string) (*Credentials, e
 	}, nil
 }
 
-// Renew extends a lease by increment (0 asks for the role's default TTL) and
-// returns the new lease duration. The engine caps it at the role's max_ttl.
+// Renew extends a lease and returns the new lease duration. increment is
+// passed to Vault, but this engine currently ignores it: every renewal resets
+// the lease to the role's ttl, capped at the role's max_ttl.
 func (c *Client) Renew(ctx context.Context, leaseID string, increment time.Duration) (time.Duration, error) {
 	secret, err := c.vault.Sys().RenewWithContext(ctx, leaseID, int(increment.Seconds()))
 	if err != nil {

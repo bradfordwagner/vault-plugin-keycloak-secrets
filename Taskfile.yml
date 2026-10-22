@@ -92,8 +92,8 @@ tasks:
     desc: Run the end-to-end test against a local Keycloak + dev Vault (docker compose).
     cmds:
       - CGO_ENABLED=0 GOOS=linux go build -o dist/plugins/{{.PLUGIN}} ./cmd/{{.PLUGIN}}
-      - docker compose -f integration/docker-compose.yml up -d
       - defer: docker compose -f integration/docker-compose.yml down -v
+      - docker compose -f integration/docker-compose.yml up -d
       - go test -tags integration -count=1 -v ./integration/...
 
   fmt:
