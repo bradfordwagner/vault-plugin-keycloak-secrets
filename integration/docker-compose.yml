@@ -1,0 +1,42 @@
+# Integration stack: a dev-mode Keycloak and a dev-mode Vault that loads the
+# plugin binary from ../dist/plugins. Dev mode auto-registers every binary in
+# -dev-plugin-dir under its file name, so no `vault plugin register` is needed.
+#
+# Build the Linux binary first (task integration does this):
+#   CGO_ENABLED=0 GOOS=linux go build -o dist/plugins/vault-plugin-keycloak-secrets ./cmd/vault-plugin-keycloak-secrets
+#
+# Image versions default to the newest pinned in the CI matrix; override with
+# VAULT_VERSION / KEYCLOAK_VERSION.
+#
+# Vault reaches Keycloak as http://keycloak:8080 on the compose network; the
+# test process reaches both on 127.0.0.1 through host ports Docker picks at
+# random, so nothing collides with services already bound locally. The test
+# looks them up with `docker compose port` unless KEYCLOAK_URL /
+# INTEGRATION_VAULT_ADDR are set (ambient VAULT_ADDR / VAULT_TOKEN are ignored).
+name: vkp-integration
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.1}
+    command: ["start-dev"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "127.0.0.1::8080"
+
+  vault:
+    image: hashicorp/vault:${VAULT_VERSION:-2.2.0}
+    command:
+      - server
+      - -dev
+      - -dev-root-token-id=root
+      - -dev-listen-address=0.0.0.0:8200
+      - -dev-plugin-dir=/vault/plugins
+    cap_add: ["IPC_LOCK"]
+    volumes:
+      - ../dist/plugins:/vault/plugins:ro
+    ports:
+      - "127.0.0.1::8200"
+    depends_on:
+      - keycloak
