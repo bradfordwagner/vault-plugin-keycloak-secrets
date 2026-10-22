@@ -9,10 +9,10 @@
 # VAULT_VERSION / KEYCLOAK_VERSION.
 #
 # Vault reaches Keycloak as http://keycloak:8080 on the compose network; the
-# test process reaches both on localhost. When 8080/8200 are taken, override
-# the host ports and point the test at them:
-#   VKP_IT_KEYCLOAK_PORT=18080 VKP_IT_VAULT_PORT=18200 \
-#   KEYCLOAK_URL=http://localhost:18080 VAULT_ADDR=http://localhost:18200 task integration
+# test process reaches both on localhost through host ports Docker picks at
+# random, so nothing collides with services already bound locally. The test
+# looks them up with `docker compose port` unless KEYCLOAK_URL / VAULT_ADDR are
+# set.
 name: vkp-integration
 
 services:
@@ -23,7 +23,7 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
     ports:
-      - "${VKP_IT_KEYCLOAK_PORT:-8080}:8080"
+      - "127.0.0.1::8080"
 
   vault:
     image: hashicorp/vault:${VAULT_VERSION:-2.2.0}
@@ -37,6 +37,6 @@ services:
     volumes:
       - ../dist/plugins:/vault/plugins:ro
     ports:
-      - "${VKP_IT_VAULT_PORT:-8200}:8200"
+      - "127.0.0.1::8200"
     depends_on:
       - keycloak

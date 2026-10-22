@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -53,14 +54,34 @@ type harness struct {
 	adminSec string // seed secret for the engine's admin client
 }
 
+// composeURL returns the localhost URL of a compose service's container port.
+// The compose file binds host ports at random, so they are looked up here.
+func composeURL(t *testing.T, service, port string) string {
+	t.Helper()
+	out, err := exec.Command("docker", "compose", "-f", "docker-compose.yml", "port", service, port).Output()
+	if err != nil {
+		t.Fatalf("docker compose port %s %s (is the stack up?): %v", service, port, err)
+	}
+	addr := strings.TrimSpace(string(out))
+	i := strings.LastIndex(addr, ":")
+	if i < 0 || i == len(addr)-1 {
+		t.Fatalf("docker compose port %s %s: unexpected output %q", service, port, addr)
+	}
+	return "http://localhost:" + addr[i+1:]
+}
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	httpc := &http.Client{Timeout: 30 * time.Second}
-	kcURL := strings.TrimRight(env("KEYCLOAK_URL", "http://localhost:8080"), "/")
+	kcURL := os.Getenv("KEYCLOAK_URL")
+	if kcURL == "" {
+		kcURL = composeURL(t, "keycloak", "8080")
+	}
+	kcURL = strings.TrimRight(kcURL, "/")
 
 	vcfg := api.DefaultConfig()
 	if os.Getenv("VAULT_ADDR") == "" {
-		vcfg.Address = "http://localhost:8200"
+		vcfg.Address = composeURL(t, "vault", "8200")
 	}
 	vc, err := api.NewClient(vcfg)
 	if err != nil {
