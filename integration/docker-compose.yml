@@ -5,6 +5,9 @@
 # Build the Linux binary first (task integration does this):
 #   CGO_ENABLED=0 GOOS=linux go build -o dist/plugins/vault-plugin-keycloak-secrets ./cmd/vault-plugin-keycloak-secrets
 #
+# Image versions default to the newest pinned in the CI matrix; override with
+# VAULT_VERSION / KEYCLOAK_VERSION.
+#
 # Vault reaches Keycloak as http://keycloak:8080 on the compose network; the
 # test process reaches both on localhost. When 8080/8200 are taken, override
 # the host ports and point the test at them:
@@ -14,7 +17,7 @@ name: vkp-integration
 
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.5
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.1}
     command: ["start-dev"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -23,7 +26,7 @@ services:
       - "${VKP_IT_KEYCLOAK_PORT:-8080}:8080"
 
   vault:
-    image: hashicorp/vault:2.1.2
+    image: hashicorp/vault:${VAULT_VERSION:-2.2.0}
     command:
       - server
       - -dev

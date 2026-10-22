@@ -15,6 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Last 3 minor releases of each, pinned to their newest patch. Bump the
+    # lists when a new minor ships.
+    strategy:
+      fail-fast: false
+      matrix:
+        vault: ['2.2.0', '2.1.2', '2.0.4']
+        keycloak: ['26.8.1', '26.7.5', '26.6.4']
+    name: "vault ${{ matrix.vault }} / keycloak ${{ matrix.keycloak }}"
+    env:
+      VAULT_VERSION: ${{ matrix.vault }}
+      KEYCLOAK_VERSION: ${{ matrix.keycloak }}
     steps:
       - uses: actions/checkout@v4
 
