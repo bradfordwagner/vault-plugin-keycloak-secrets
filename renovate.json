@@ -1,0 +1,77 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>bradfordwagner/renovate"
+  ],
+  "customManagers": [
+    {
+      "description": "Newest entry of a version matrix; may move to a new minor or major",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\\w+: \\['(?<currentValue>[^']+)'"
+      ],
+      "depTypeTemplate": "matrix-head"
+    },
+    {
+      "description": "Older entries of a version matrix; compatibility pins each to its own minor line",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\\w+: \\[[^\\]\\n]*\\]",
+        ", '(?<currentValue>[^']+)'"
+      ],
+      "depTypeTemplate": "matrix-tail",
+      "versioningTemplate": "regex:^(?<compatibility>(?<major>\\d+)\\.(?<minor>\\d+))\\.(?<patch>\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDepTypes": [
+        "matrix-head",
+        "matrix-tail"
+      ],
+      "matchDepNames": [
+        "hashicorp/vault"
+      ],
+      "groupName": "vault matrix",
+      "postUpgradeTasks": {
+        "commands": [
+          "node .github/renovate/version-matrix.mjs vault"
+        ],
+        "fileFilters": [
+          ".github/workflows/integration.yml",
+          "integration/docker-compose.yml"
+        ],
+        "executionMode": "branch"
+      },
+      "separateMajorMinor": false
+    },
+    {
+      "matchDepTypes": [
+        "matrix-head",
+        "matrix-tail"
+      ],
+      "matchDepNames": [
+        "quay.io/keycloak/keycloak"
+      ],
+      "groupName": "keycloak matrix",
+      "postUpgradeTasks": {
+        "commands": [
+          "node .github/renovate/version-matrix.mjs keycloak"
+        ],
+        "fileFilters": [
+          ".github/workflows/integration.yml",
+          "integration/docker-compose.yml"
+        ],
+        "executionMode": "branch"
+      },
+      "separateMajorMinor": false
+    }
+  ]
+}

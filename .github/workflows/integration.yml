@@ -15,12 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Last 3 minor releases of each, pinned to their newest patch. Bump the
-    # lists when a new minor ships.
+    # Last 3 minor releases of each, pinned to their newest patch. Renovate
+    # keeps the window current via .github/renovate/version-matrix.mjs.
     strategy:
       fail-fast: false
       matrix:
+        # renovate: datasource=docker depName=hashicorp/vault
         vault: ['2.2.0', '2.1.2', '2.0.4']
+        # renovate: datasource=docker depName=quay.io/keycloak/keycloak
         keycloak: ['26.8.1', '26.7.5', '26.6.4']
     name: "vault ${{ matrix.vault }} / keycloak ${{ matrix.keycloak }}"
     env:
