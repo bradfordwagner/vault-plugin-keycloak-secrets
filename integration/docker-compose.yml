@@ -26,7 +26,7 @@ services:
       - "127.0.0.1::8080"
 
   vault:
-    image: hashicorp/vault:${VAULT_VERSION:-2.2.0}
+    image: hashicorp/vault:${VAULT_VERSION:-2.2.1}
     command:
       - server
       - -dev
