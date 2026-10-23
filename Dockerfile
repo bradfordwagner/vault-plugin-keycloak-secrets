@@ -14,7 +14,7 @@
 #     path:  /usr/local/bin/vault-plugin-keycloak-secrets
 
 # Build with the owned Go builder (override BUILDER_IMAGE in CI to pin a tag).
-ARG BUILDER_IMAGE=ghcr.io/bradfordwagner/go-builder:1.26-ubuntu_noble
+ARG BUILDER_IMAGE=ghcr.io/bradfordwagner/go-builder:1.27-ubuntu_noble
 # Final base. scratch keeps the carrier minimal; the binary is never run here.
 ARG BASE_IMAGE=scratch
 
