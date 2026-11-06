@@ -17,7 +17,7 @@ name: vkp-integration
 
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.1}
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.2}
     command: ["start-dev"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
