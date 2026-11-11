@@ -37,6 +37,30 @@ const (
 	extraRole      = "it-extra-role"    // granted only through the engine role's realm_roles
 )
 
+// serverURLs are the names Vault dials Keycloak by over the compose network:
+// the per-cluster A record and the CNAME in front of it (see dns/).
+func serverURLs() []string {
+	return strings.Split(env("KEYCLOAK_URLS_FROM_VAULT",
+		"http://keycloak.clustera.dev.bradfordwagner.com:8080,http://keycloak.dev.bradfordwagner.com:8080"), ",")
+}
+
+// assertCNAME checks that Vault resolves the CNAME name through the dns
+// service, so the two names keep exercising a real CNAME and A record.
+func assertCNAME(t *testing.T) {
+	t.Helper()
+	if os.Getenv("KEYCLOAK_URLS_FROM_VAULT") != "" {
+		return
+	}
+	out, err := exec.Command("docker", "compose", "-f", "docker-compose.yml",
+		"exec", "-T", "vault", "nslookup", "keycloak.dev.bradfordwagner.com").CombinedOutput()
+	if err != nil {
+		t.Fatalf("nslookup from vault: %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "canonical name = keycloak.clustera.dev.bradfordwagner.com") {
+		t.Fatalf("keycloak.dev.bradfordwagner.com is not a CNAME to the cluster A record:\n%s", out)
+	}
+}
+
 // env returns the named variable or def when unset.
 func env(name, def string) string {
 	if v := os.Getenv(name); v != "" {
@@ -194,7 +218,7 @@ func (h *harness) setupKeycloak(ctx context.Context, t *testing.T) {
 }
 
 // setupVault (re)mounts the engine and writes its config and roles.
-func (h *harness) setupVault(ctx context.Context, t *testing.T) {
+func (h *harness) setupVault(ctx context.Context, t *testing.T, serverURL string) {
 	t.Helper()
 	sys := h.vault.Sys()
 	if mounts, err := sys.ListMountsWithContext(ctx); err != nil {
@@ -215,8 +239,7 @@ func (h *harness) setupVault(ctx context.Context, t *testing.T) {
 		}
 	}
 	write("config", map[string]interface{}{
-		// Vault reaches Keycloak over the compose network, not localhost.
-		"server_url":    env("KEYCLOAK_URL_FROM_VAULT", "http://keycloak:8080"),
+		"server_url":    serverURL,
 		"auth_realm":    "master",
 		"client_id":     adminClient,
 		"client_secret": h.adminSec,
@@ -299,9 +322,20 @@ func TestEngine(t *testing.T) {
 
 	h := newHarness(t)
 	h.waitReady(ctx, t)
-	h.setupKeycloak(ctx, t)
-	h.setupVault(ctx, t)
+	assertCNAME(t)
 
+	for _, serverURL := range serverURLs() {
+		t.Run(strings.TrimPrefix(serverURL, "http://"), func(t *testing.T) {
+			// Fresh admin client per name: the rotation subtest retires the seed secret.
+			h.setupKeycloak(ctx, t)
+			h.setupVault(ctx, t, serverURL)
+			h.engineTests(ctx, t)
+		})
+	}
+}
+
+// engineTests drives the engine through its lifecycle against one server_url.
+func (h *harness) engineTests(ctx context.Context, t *testing.T) {
 	t.Run("issue, renew, revoke", func(t *testing.T) {
 		creds, err := h.creds.Issue(ctx, realm, "app")
 		if err != nil {

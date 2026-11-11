@@ -24,10 +24,14 @@ jobs:
         vault: ['2.2.1', '2.1.2', '2.0.4']
         # renovate: datasource=docker depName=quay.io/keycloak/keycloak
         keycloak: ['26.8.2', '26.7.5', '26.6.4']
-    name: "vault ${{ matrix.vault }} / keycloak ${{ matrix.keycloak }}"
+        # dynamic: Keycloak derives its hostname per request; fixed: KC_HOSTNAME
+        # pinned to the CNAME (integration/hostname-fixed.yml).
+        hostname: [dynamic, fixed]
+    name: "vault ${{ matrix.vault }} / keycloak ${{ matrix.keycloak }} / hostname ${{ matrix.hostname }}"
     env:
       VAULT_VERSION: ${{ matrix.vault }}
       KEYCLOAK_VERSION: ${{ matrix.keycloak }}
+      COMPOSE_FILE: ${{ matrix.hostname == 'fixed' && 'integration/docker-compose.yml:integration/hostname-fixed.yml' || 'integration/docker-compose.yml' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -40,18 +44,18 @@ jobs:
         run: CGO_ENABLED=0 GOOS=linux go build -o dist/plugins/vault-plugin-keycloak-secrets ./cmd/vault-plugin-keycloak-secrets
 
       - name: Start Keycloak + Vault
-        run: docker compose -f integration/docker-compose.yml up -d
+        run: docker compose up -d
 
       - name: Integration test
         run: go test -tags integration -count=1 -v ./integration/...
 
       - name: Container logs
         if: failure()
-        run: docker compose -f integration/docker-compose.yml logs
+        run: docker compose logs
 
       - name: Stop stack
         if: always()
-        run: docker compose -f integration/docker-compose.yml down -v
+        run: docker compose down -v
 
   # Single stable check for branch protection. Matrix job names change whenever
   # a version is bumped, so main requires this job instead of each cell.

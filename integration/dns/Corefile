@@ -1,0 +1,5 @@
+dev.bradfordwagner.com:53 {
+    file /etc/coredns/db.dev.bradfordwagner.com
+    log
+    errors
+}

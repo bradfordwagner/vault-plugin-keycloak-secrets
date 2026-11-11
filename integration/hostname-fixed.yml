@@ -1,0 +1,6 @@
+# Overlay: pin Keycloak's hostname to the CNAME, as a production deployment
+# would. Without it Keycloak derives the hostname from each request.
+services:
+  keycloak:
+    environment:
+      KC_HOSTNAME: http://keycloak.dev.bradfordwagner.com:8080
