@@ -175,6 +175,11 @@ func (c *keycloakClient) doAdmin(ctx context.Context, token, method, reqURL stri
 	if err != nil {
 		return resp, nil, err
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return resp, body, fmt.Errorf("keycloak admin API rejected the token: status 401: %s "+
+			"(Keycloak 26.8.2+ requires the kc-admin-api client scope on the admin client %q; see docs/admin-client.md)",
+			string(body), c.clientID)
+	}
 	return resp, body, nil
 }
 

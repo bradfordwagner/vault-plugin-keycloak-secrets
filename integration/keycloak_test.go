@@ -281,3 +281,27 @@ func waitFor(ctx context.Context, timeout time.Duration, what string, fn func() 
 		}
 	}
 }
+
+// addDefaultClientScope attaches the named client scope as a default scope on a
+// client. A realm without the scope is a no-op, so older Keycloak still passes.
+func (k *kcAdmin) addDefaultClientScope(ctx context.Context, realm, internalID, scope string) error {
+	body, err := k.must(ctx, http.MethodGet, "/admin/realms/"+realm+"/client-scopes", nil, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	var scopes []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &scopes); err != nil {
+		return err
+	}
+	for _, s := range scopes {
+		if s.Name == scope {
+			_, err := k.must(ctx, http.MethodPut,
+				"/admin/realms/"+realm+"/clients/"+internalID+"/default-client-scopes/"+s.ID, nil, http.StatusNoContent)
+			return err
+		}
+	}
+	return nil
+}

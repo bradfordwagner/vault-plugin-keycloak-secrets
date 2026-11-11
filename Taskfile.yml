@@ -89,11 +89,13 @@ tasks:
       - go test ./...
 
   integration:
-    desc: Run the end-to-end test against a local Keycloak + dev Vault (docker compose).
+    desc: Run the end-to-end test against a local Keycloak + dev Vault (docker compose). KC_HOSTNAME_MODE=fixed pins Keycloak's hostname.
+    vars:
+      COMPOSE_FILES: -f integration/docker-compose.yml{{if eq .KC_HOSTNAME_MODE "fixed"}} -f integration/hostname-fixed.yml{{end}}
     cmds:
       - CGO_ENABLED=0 GOOS=linux go build -o dist/plugins/{{.PLUGIN}} ./cmd/{{.PLUGIN}}
-      - defer: docker compose -f integration/docker-compose.yml down -v
-      - docker compose -f integration/docker-compose.yml up -d
+      - defer: docker compose {{.COMPOSE_FILES}} down -v
+      - docker compose {{.COMPOSE_FILES}} up -d
       - go test -tags integration -count=1 -v ./integration/...
 
   fmt:

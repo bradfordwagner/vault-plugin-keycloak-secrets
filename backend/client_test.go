@@ -1,6 +1,10 @@
 package backend
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +104,28 @@ func TestBuildCloneRepresentation(t *testing.T) {
 			if srcMapper["id"] != "mapper-uuid-1" {
 				t.Errorf("src protocolMappers[0][id] = %v, want it unchanged (%q)", srcMapper["id"], "mapper-uuid-1")
 			}
+		}
+	}
+}
+
+func TestDoAdminUnauthorizedHintsAdminScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"HTTP 401 Unauthorized"}`))
+	}))
+	defer srv.Close()
+
+	c, err := newKeycloakClient(&config{ServerURL: srv.URL, ClientID: "vault-admin"}, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.getClientByClientID(context.Background(), "tok", "template")
+	if err == nil {
+		t.Fatal("expected error on 401")
+	}
+	for _, want := range []string{"status 401", "kc-admin-api", `"vault-admin"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
 		}
 	}
 }

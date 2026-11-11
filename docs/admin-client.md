@@ -47,6 +47,30 @@ realms you provision into.
 > `manage-clients` grant for master; if you provision into `master` as well, the
 > `realm-management` block below already covers it.
 
+## Admin API audience (Keycloak 26.8.2+)
+
+Keycloak 26.8.2 rejects Admin REST API tokens that lack the admin API audience,
+answering `401 Unauthorized` even when the service account holds every role
+above. The audience comes from the built-in `kc-admin-api` client scope, which
+Keycloak assigns to its own `admin-cli` but **not** to clients you create. Add it
+to the admin client's default client scopes. Without it the engine fails every
+creds read and rotation with:
+
+```
+keycloak admin API rejected the token: status 401: ... (Keycloak 26.8.2+ requires the kc-admin-api client scope ...)
+```
+
+The scope does not exist before 26.8.2; assign it once the server is on 26.8.2 or
+later.
+
+**Upgrading an existing Keycloak breaks a working engine.** The 26.8.2 migration
+creates `kc-admin-api` in every realm but assigns it only to `admin-cli` and
+`security-admin-console`, so an admin client set up on an earlier version starts
+getting 401 the moment the server is upgraded, with no plugin change. Assign the
+scope right after upgrading (or as part of the same rollout). This applies
+whichever realm is the `auth_realm`: the scope exists in every realm, and the
+audience it adds names the realm that minted the token.
+
 ## keycloak-config-cli snippet (define in the auth realm, e.g. `master`)
 
 ```yaml
@@ -62,6 +86,17 @@ clients:
     standardFlowEnabled: false     # no browser/auth-code flow
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
+    # Keycloak 26.8.2+: kc-admin-api carries the admin API audience. This list
+    # replaces the client's defaults, so restate the ones you keep.
+    defaultClientScopes:
+      - acr
+      - basic
+      - email
+      - profile
+      - roles
+      - service_account
+      - web-origins
+      - kc-admin-api
     # NOTE: no `secret:` here on purpose. Keycloak generates it; the seed job
     # reads it once into Vault, then the engine rotates it.
 

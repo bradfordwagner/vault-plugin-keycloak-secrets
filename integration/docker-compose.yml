@@ -8,22 +8,40 @@
 # Image versions default to the newest pinned in the CI matrix; override with
 # VAULT_VERSION / KEYCLOAK_VERSION.
 #
-# Vault reaches Keycloak as http://keycloak:8080 on the compose network; the
-# test process reaches both on 127.0.0.1 through host ports Docker picks at
-# random, so nothing collides with services already bound locally. The test
-# looks them up with `docker compose port` unless KEYCLOAK_URL /
+# Vault reaches Keycloak by two names, resolved by the dns service exactly as
+# production records are: keycloak.clustera.dev.bradfordwagner.com (A record)
+# and keycloak.dev.bradfordwagner.com (CNAME to it), plus an admin-only name,
+# keycloak-admin.clustera.dev.bradfordwagner.com. The test runs the engine once
+# per name. hostname-fixed.yml pins KC_HOSTNAME and KC_HOSTNAME_ADMIN; without
+# it Keycloak derives its hostname per request.
+#
+# The test process reaches Keycloak and Vault on 127.0.0.1 through host ports
+# Docker picks at random, so nothing collides with services already bound
+# locally. The test looks them up with `docker compose port` unless KEYCLOAK_URL /
 # INTEGRATION_VAULT_ADDR are set (ambient VAULT_ADDR / VAULT_TOKEN are ignored).
 name: vkp-integration
 
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.1}
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.2}
     command: ["start-dev"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
     ports:
       - "127.0.0.1::8080"
+    networks:
+      default:
+        ipv4_address: 172.30.53.10
+
+  dns:
+    image: coredns/coredns:1.11.3
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./dns:/etc/coredns:ro
+    networks:
+      default:
+        ipv4_address: 172.30.53.53
 
   vault:
     image: hashicorp/vault:${VAULT_VERSION:-2.2.1}
@@ -38,5 +56,14 @@ services:
       - ../dist/plugins:/vault/plugins:ro
     ports:
       - "127.0.0.1::8200"
+    # Docker's embedded DNS still answers compose names and forwards the rest here.
+    dns: [172.30.53.53]
     depends_on:
       - keycloak
+      - dns
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.53.0/24
