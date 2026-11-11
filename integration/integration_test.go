@@ -183,6 +183,8 @@ func (h *harness) setupKeycloak(ctx context.Context, t *testing.T) {
 		"directAccessGrantsEnabled": false,
 	})
 	step(err)
+	// Keycloak 26.8.2+ rejects admin API tokens lacking the kc-admin-api audience.
+	step(kc.addDefaultClientScope(ctx, "master", adminID, "kc-admin-api"))
 	adminSA, err := kc.serviceAccountUser(ctx, "master", adminID)
 	step(err)
 	step(kc.grantClientRoles(ctx, "master", adminSA, realm+"-realm", "manage-clients", "manage-users", "view-realm"))
