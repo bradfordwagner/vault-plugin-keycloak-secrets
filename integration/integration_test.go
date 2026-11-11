@@ -12,7 +12,11 @@ package integration
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -98,6 +102,49 @@ func assertCNAME(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "canonical name = keycloak.clustera.dev.bradfordwagner.com") {
 		t.Fatalf("keycloak.dev.bradfordwagner.com is not a CNAME to the cluster A record:\n%s", out)
+	}
+}
+
+// assertIssuer checks that Keycloak, reached through the ingress at an https
+// server URL, advertises an https issuer. It fails when Keycloak ignores the
+// ingress's X-Forwarded-* headers, which the engine itself never notices.
+func (h *harness) assertIssuer(ctx context.Context, t *testing.T, serverURL, authRealm string) {
+	t.Helper()
+	if !strings.HasPrefix(serverURL, "https://") || os.Getenv("KEYCLOAK_URLS_FROM_VAULT") != "" {
+		return
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(h.caPEM)) {
+		t.Fatal("ingress root CA is not PEM")
+	}
+	ingress := strings.TrimPrefix(composeURL(t, "ingress", "443"), "http://")
+	hc := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, ingress)
+			},
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		serverURL+"/realms/"+authRealm+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		t.Fatalf("openid-configuration through ingress: %v", err)
+	}
+	defer resp.Body.Close()
+	var oidc struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&oidc); err != nil {
+		t.Fatalf("openid-configuration through ingress: status %d: %v", resp.StatusCode, err)
+	}
+	if !strings.HasPrefix(oidc.Issuer, "https://") {
+		t.Errorf("issuer through %s = %q, want https (is KC_PROXY_HEADERS set?)", serverURL, oidc.Issuer)
 	}
 }
 
@@ -384,6 +431,7 @@ func TestEngine(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				// Fresh admin client per run: the rotation subtest retires the seed secret.
 				h.setupKeycloak(ctx, t, authRealm)
+				h.assertIssuer(ctx, t, serverURL, authRealm)
 				h.setupVault(ctx, t, serverURL)
 				h.engineTests(ctx, t)
 			})
