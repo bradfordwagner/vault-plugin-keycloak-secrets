@@ -6,3 +6,5 @@ $TTL 5
 ns                 IN A   172.30.53.53
 keycloak.clustera  IN A   172.30.53.10
 keycloak           IN CNAME keycloak.clustera.dev.bradfordwagner.com.
+; Admin-only name, pinned as KC_HOSTNAME_ADMIN in hostname-fixed.yml.
+keycloak-admin.clustera IN A 172.30.53.10

@@ -38,10 +38,14 @@ const (
 )
 
 // serverURLs are the names Vault dials Keycloak by over the compose network:
-// the per-cluster A record and the CNAME in front of it (see dns/).
+// the per-cluster A record, the CNAME in front of it, and the admin-only name
+// (see dns/).
 func serverURLs() []string {
-	return strings.Split(env("KEYCLOAK_URLS_FROM_VAULT",
-		"http://keycloak.clustera.dev.bradfordwagner.com:8080,http://keycloak.dev.bradfordwagner.com:8080"), ",")
+	return strings.Split(env("KEYCLOAK_URLS_FROM_VAULT", strings.Join([]string{
+		"http://keycloak.clustera.dev.bradfordwagner.com:8080",
+		"http://keycloak.dev.bradfordwagner.com:8080",
+		"http://keycloak-admin.clustera.dev.bradfordwagner.com:8080",
+	}, ",")), ",")
 }
 
 // assertCNAME checks that Vault resolves the CNAME name through the dns

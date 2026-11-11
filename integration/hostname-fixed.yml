@@ -1,6 +1,8 @@
-# Overlay: pin Keycloak's hostname to the CNAME, as a production deployment
-# would. Without it Keycloak derives the hostname from each request.
+# Overlay: pin Keycloak's hostname to the CNAME and put the admin console on
+# its own name, as a hardened production deployment would. Without it Keycloak
+# derives the hostname from each request.
 services:
   keycloak:
     environment:
       KC_HOSTNAME: http://keycloak.dev.bradfordwagner.com:8080
+      KC_HOSTNAME_ADMIN: http://keycloak-admin.clustera.dev.bradfordwagner.com:8080

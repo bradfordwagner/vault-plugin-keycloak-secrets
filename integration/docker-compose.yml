@@ -10,9 +10,10 @@
 #
 # Vault reaches Keycloak by two names, resolved by the dns service exactly as
 # production records are: keycloak.clustera.dev.bradfordwagner.com (A record)
-# and keycloak.dev.bradfordwagner.com (CNAME to it). The test runs the engine
-# once per name. hostname-fixed.yml pins KC_HOSTNAME; without it Keycloak
-# derives its hostname per request.
+# and keycloak.dev.bradfordwagner.com (CNAME to it), plus an admin-only name,
+# keycloak-admin.clustera.dev.bradfordwagner.com. The test runs the engine once
+# per name. hostname-fixed.yml pins KC_HOSTNAME and KC_HOSTNAME_ADMIN; without
+# it Keycloak derives its hostname per request.
 #
 # The test process reaches Keycloak and Vault on 127.0.0.1 through host ports
 # Docker picks at random, so nothing collides with services already bound
