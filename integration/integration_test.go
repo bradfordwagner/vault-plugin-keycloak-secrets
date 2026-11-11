@@ -37,6 +37,17 @@ const (
 	extraRole      = "it-extra-role"    // granted only through the engine role's realm_roles
 )
 
+// authRealms are the realms the engine's admin client lives in: master, and the
+// target realm itself, where only its realm-management roles exist.
+var authRealms = []string{"master", realm}
+
+// redirectURIs are the template's redirect URIs, one per name users reach
+// Keycloak by. Clones must carry both.
+var redirectURIs = []string{
+	"https://app.clustera.dev.bradfordwagner.com/callback",
+	"https://app.dev.bradfordwagner.com/callback",
+}
+
 // serverURLs are the names Vault dials Keycloak by over the compose network:
 // the per-cluster A record, the CNAME in front of it, and the admin-only name
 // (see dns/).
@@ -80,6 +91,8 @@ type harness struct {
 	creds    *client.Client
 	httpc    *http.Client
 	adminSec string // seed secret for the engine's admin client
+
+	authRealm string // realm the engine's admin client lives in
 }
 
 // composeURL returns the loopback URL of a compose service's container port.
@@ -155,8 +168,8 @@ func (h *harness) waitReady(ctx context.Context, t *testing.T) {
 }
 
 // setupKeycloak (re)creates the test realm, the template client and the
-// engine's least-privilege admin client in master.
-func (h *harness) setupKeycloak(ctx context.Context, t *testing.T) {
+// engine's least-privilege admin client in authRealm.
+func (h *harness) setupKeycloak(ctx context.Context, t *testing.T, authRealm string) {
 	t.Helper()
 	kc := h.kc
 	step := func(err error) {
@@ -185,7 +198,8 @@ func (h *harness) setupKeycloak(ctx context.Context, t *testing.T) {
 		"enabled":                true,
 		"publicClient":           false,
 		"serviceAccountsEnabled": true,
-		"standardFlowEnabled":    false,
+		"standardFlowEnabled":    true,
+		"redirectUris":           redirectURIs,
 		"attributes":             map[string]string{"it.marker": "from-template"},
 	})
 	step(err)
@@ -193,16 +207,17 @@ func (h *harness) setupKeycloak(ctx context.Context, t *testing.T) {
 	step(err)
 	step(kc.grantRealmRoles(ctx, realm, tplSA, templateRole))
 
-	// Engine admin client in master, granted exactly the roles docs/admin-client.md
-	// lists, plus manage-clients on master itself so config/rotate can regenerate
-	// its own secret.
-	if existing, err := kc.findClient(ctx, "master", adminClient); err != nil {
+	// Engine admin client, granted exactly the roles docs/admin-client.md lists,
+	// plus manage-clients on its own realm so config/rotate can regenerate its
+	// own secret. Outside master those roles all live on realm-management.
+	h.authRealm = authRealm
+	if existing, err := kc.findClient(ctx, authRealm, adminClient); err != nil {
 		t.Fatal(err)
 	} else if existing != nil {
-		_, err = kc.must(ctx, http.MethodDelete, "/admin/realms/master/clients/"+existing["id"].(string), nil, http.StatusNoContent)
+		_, err = kc.must(ctx, http.MethodDelete, "/admin/realms/"+authRealm+"/clients/"+existing["id"].(string), nil, http.StatusNoContent)
 		step(err)
 	}
-	adminID, err := kc.createClient(ctx, "master", map[string]interface{}{
+	adminID, err := kc.createClient(ctx, authRealm, map[string]interface{}{
 		"clientId":                  adminClient,
 		"enabled":                   true,
 		"publicClient":              false,
@@ -212,12 +227,16 @@ func (h *harness) setupKeycloak(ctx context.Context, t *testing.T) {
 	})
 	step(err)
 	// Keycloak 26.8.2+ rejects admin API tokens lacking the kc-admin-api audience.
-	step(kc.addDefaultClientScope(ctx, "master", adminID, "kc-admin-api"))
-	adminSA, err := kc.serviceAccountUser(ctx, "master", adminID)
+	step(kc.addDefaultClientScope(ctx, authRealm, adminID, "kc-admin-api"))
+	adminSA, err := kc.serviceAccountUser(ctx, authRealm, adminID)
 	step(err)
-	step(kc.grantClientRoles(ctx, "master", adminSA, realm+"-realm", "manage-clients", "manage-users", "view-realm"))
-	step(kc.grantClientRoles(ctx, "master", adminSA, "master-realm", "manage-clients"))
-	h.adminSec, err = kc.clientSecret(ctx, "master", adminID)
+	if authRealm == "master" {
+		step(kc.grantClientRoles(ctx, "master", adminSA, realm+"-realm", "manage-clients", "manage-users", "view-realm"))
+		step(kc.grantClientRoles(ctx, "master", adminSA, "master-realm", "manage-clients"))
+	} else {
+		step(kc.grantClientRoles(ctx, authRealm, adminSA, "realm-management", "manage-clients", "manage-users", "view-realm"))
+	}
+	h.adminSec, err = kc.clientSecret(ctx, authRealm, adminID)
 	step(err)
 }
 
@@ -244,7 +263,7 @@ func (h *harness) setupVault(ctx context.Context, t *testing.T, serverURL string
 	}
 	write("config", map[string]interface{}{
 		"server_url":    serverURL,
-		"auth_realm":    "master",
+		"auth_realm":    h.authRealm,
 		"client_id":     adminClient,
 		"client_secret": h.adminSec,
 		// Off so the periodic tick cannot rotate mid-test; rotation is driven
@@ -329,12 +348,14 @@ func TestEngine(t *testing.T) {
 	assertCNAME(t)
 
 	for _, serverURL := range serverURLs() {
-		t.Run(strings.TrimPrefix(serverURL, "http://"), func(t *testing.T) {
-			// Fresh admin client per name: the rotation subtest retires the seed secret.
-			h.setupKeycloak(ctx, t)
-			h.setupVault(ctx, t, serverURL)
-			h.engineTests(ctx, t)
-		})
+		for _, authRealm := range authRealms {
+			t.Run(strings.TrimPrefix(serverURL, "http://")+"/auth_realm="+authRealm, func(t *testing.T) {
+				// Fresh admin client per run: the rotation subtest retires the seed secret.
+				h.setupKeycloak(ctx, t, authRealm)
+				h.setupVault(ctx, t, serverURL)
+				h.engineTests(ctx, t)
+			})
+		}
 	}
 }
 
@@ -377,6 +398,15 @@ func (h *harness) engineTests(ctx context.Context, t *testing.T) {
 				t.Errorf("clone attribute %s = %v, want %q", k, attrs[k], want)
 			}
 		}
+		var gotURIs []string
+		uris, _ := got["redirectUris"].([]interface{})
+		for _, u := range uris {
+			gotURIs = append(gotURIs, u.(string))
+		}
+		slices.Sort(gotURIs)
+		if !slices.Equal(gotURIs, redirectURIs) {
+			t.Errorf("clone redirectUris = %v, want %v", gotURIs, redirectURIs)
+		}
 
 		d, err := h.creds.Renew(ctx, creds.LeaseID, 0)
 		if err != nil {
@@ -412,7 +442,7 @@ func (h *harness) engineTests(ctx context.Context, t *testing.T) {
 		if lr := fmt.Sprint(cfg.Data["last_rotated"]); lr == "0" || lr == "<nil>" {
 			t.Fatalf("last_rotated = %s after rotate, want a timestamp", lr)
 		}
-		status, _, err := postToken(ctx, h.httpc, h.kcURL, "master", url.Values{
+		status, _, err := postToken(ctx, h.httpc, h.kcURL, h.authRealm, url.Values{
 			"grant_type":    {"client_credentials"},
 			"client_id":     {adminClient},
 			"client_secret": {h.adminSec},
