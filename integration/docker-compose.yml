@@ -11,8 +11,9 @@
 # Vault reaches Keycloak by two names, resolved by the dns service exactly as
 # production records are: keycloak.clustera.dev.bradfordwagner.com (A record)
 # and keycloak.dev.bradfordwagner.com (CNAME to it), plus an admin-only name,
-# keycloak-admin.clustera.dev.bradfordwagner.com. The test runs the engine once
-# per name. hostname-fixed.yml pins KC_HOSTNAME and KC_HOSTNAME_ADMIN; without
+# keycloak-admin.clustera.dev.bradfordwagner.com. All three resolve to the
+# ingress service, which serves them over TLS on 443 and plain HTTP on 8080.
+# The test runs the engine once per name and scheme. hostname-fixed.yml pins KC_HOSTNAME and KC_HOSTNAME_ADMIN; without
 # it Keycloak derives its hostname per request.
 #
 # The test process reaches Keycloak and Vault on 127.0.0.1 through host ports
@@ -28,11 +29,22 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_PROXY_HEADERS: xforwarded
     ports:
       - "127.0.0.1::8080"
     networks:
       default:
         ipv4_address: 172.30.53.10
+
+  ingress:
+    image: caddy:2.10.2
+    volumes:
+      - ./ingress/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      default:
+        ipv4_address: 172.30.53.20
+    depends_on:
+      - keycloak
 
   dns:
     image: coredns/coredns:1.11.3
@@ -59,7 +71,7 @@ services:
     # Docker's embedded DNS still answers compose names and forwards the rest here.
     dns: [172.30.53.53]
     depends_on:
-      - keycloak
+      - ingress
       - dns
 
 networks:
