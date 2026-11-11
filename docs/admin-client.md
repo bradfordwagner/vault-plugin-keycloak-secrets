@@ -63,6 +63,14 @@ keycloak admin API rejected the token: status 401: ... (Keycloak 26.8.2+ require
 The scope does not exist before 26.8.2; assign it once the server is on 26.8.2 or
 later.
 
+**Upgrading an existing Keycloak breaks a working engine.** The 26.8.2 migration
+creates `kc-admin-api` in every realm but assigns it only to `admin-cli` and
+`security-admin-console`, so an admin client set up on an earlier version starts
+getting 401 the moment the server is upgraded, with no plugin change. Assign the
+scope right after upgrading (or as part of the same rollout). This applies
+whichever realm is the `auth_realm`: the scope exists in every realm, and the
+audience it adds names the realm that minted the token.
+
 ## keycloak-config-cli snippet (define in the auth realm, e.g. `master`)
 
 ```yaml
