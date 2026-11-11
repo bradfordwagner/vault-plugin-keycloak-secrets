@@ -40,6 +40,8 @@ services:
     image: caddy:2.10.2
     volumes:
       - ./ingress/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1::443"
     networks:
       default:
         ipv4_address: 172.30.53.20
