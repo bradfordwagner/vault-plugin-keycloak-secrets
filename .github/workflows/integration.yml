@@ -24,10 +24,14 @@ jobs:
         vault: ['2.2.1', '2.1.2', '2.0.4']
         # renovate: datasource=docker depName=quay.io/keycloak/keycloak
         keycloak: ['26.8.2', '26.7.5', '26.6.4']
-        # dynamic: Keycloak derives its hostname per request; fixed: KC_HOSTNAME
-        # pinned to the CNAME (integration/hostname-fixed.yml).
-        hostname: [dynamic, fixed]
-    name: "vault ${{ matrix.vault }} / keycloak ${{ matrix.keycloak }} / hostname ${{ matrix.hostname }}"
+        # dynamic: Keycloak derives its hostname per request. fixed (KC_HOSTNAME
+        # pinned, integration/hostname-fixed.yml) runs once, on the compose
+        # defaults: the include leaves vault/keycloak empty, so it tracks the
+        # newest pins without its own Renovate entry.
+        hostname: [dynamic]
+        include:
+          - hostname: fixed
+    name: "vault ${{ matrix.vault || 'newest' }} / keycloak ${{ matrix.keycloak || 'newest' }} / hostname ${{ matrix.hostname }}"
     env:
       VAULT_VERSION: ${{ matrix.vault }}
       KEYCLOAK_VERSION: ${{ matrix.keycloak }}
