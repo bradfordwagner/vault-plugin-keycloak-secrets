@@ -1,0 +1,16 @@
+# Cluster ingress: terminates TLS with Caddy's internal CA and forwards to
+# Keycloak with X-Forwarded-* headers, as the production ingress does. Plain
+# HTTP on :8080 goes through the same proxy.
+{
+	local_certs
+	skip_install_trust
+	auto_https disable_redirects
+}
+
+https://keycloak.clustera.dev.bradfordwagner.com, https://keycloak.dev.bradfordwagner.com, https://keycloak-admin.clustera.dev.bradfordwagner.com {
+	reverse_proxy keycloak:8080
+}
+
+http://:8080 {
+	reverse_proxy keycloak:8080
+}

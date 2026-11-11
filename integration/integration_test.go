@@ -48,15 +48,40 @@ var redirectURIs = []string{
 	"https://app.dev.bradfordwagner.com/callback",
 }
 
-// serverURLs are the names Vault dials Keycloak by over the compose network:
+// serverURLs are the URLs Vault dials Keycloak by over the compose network:
 // the per-cluster A record, the CNAME in front of it, and the admin-only name
-// (see dns/).
+// (see dns/), each through the ingress over plain HTTP and over TLS.
 func serverURLs() []string {
 	return strings.Split(env("KEYCLOAK_URLS_FROM_VAULT", strings.Join([]string{
 		"http://keycloak.clustera.dev.bradfordwagner.com:8080",
 		"http://keycloak.dev.bradfordwagner.com:8080",
 		"http://keycloak-admin.clustera.dev.bradfordwagner.com:8080",
+		"https://keycloak.clustera.dev.bradfordwagner.com",
+		"https://keycloak.dev.bradfordwagner.com",
+		"https://keycloak-admin.clustera.dev.bradfordwagner.com",
 	}, ",")), ",")
+}
+
+// ingressCA returns the PEM root the ingress signs its certificates with,
+// passed to the engine as ca_cert for https server URLs.
+func ingressCA(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	if pem := os.Getenv("KEYCLOAK_CA_PEM"); pem != "" {
+		return pem
+	}
+	var pem string
+	if err := waitFor(ctx, time.Minute, "ingress root CA", func() error {
+		out, err := exec.Command("docker", "compose", "-f", "docker-compose.yml",
+			"exec", "-T", "ingress", "cat", "/data/caddy/pki/authorities/local/root.crt").Output()
+		if err != nil {
+			return err
+		}
+		pem = string(out)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return pem
 }
 
 // assertCNAME checks that Vault resolves the CNAME name through the dns
@@ -93,6 +118,7 @@ type harness struct {
 	adminSec string // seed secret for the engine's admin client
 
 	authRealm string // realm the engine's admin client lives in
+	caPEM     string // ingress root CA, for https server URLs
 }
 
 // composeURL returns the loopback URL of a compose service's container port.
@@ -261,7 +287,7 @@ func (h *harness) setupVault(ctx context.Context, t *testing.T, serverURL string
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	write("config", map[string]interface{}{
+	cfg := map[string]interface{}{
 		"server_url":    serverURL,
 		"auth_realm":    h.authRealm,
 		"client_id":     adminClient,
@@ -269,7 +295,11 @@ func (h *harness) setupVault(ctx context.Context, t *testing.T, serverURL string
 		// Off so the periodic tick cannot rotate mid-test; rotation is driven
 		// explicitly through config/rotate below.
 		"rotation_period": 0,
-	})
+	}
+	if strings.HasPrefix(serverURL, "https://") {
+		cfg["ca_cert"] = h.caPEM
+	}
+	write("config", cfg)
 	write("realm/"+realm+"/roles/app", map[string]interface{}{
 		"source_client_id": templateClient,
 		"realm_roles":      extraRole,
@@ -346,10 +376,12 @@ func TestEngine(t *testing.T) {
 	h := newHarness(t)
 	h.waitReady(ctx, t)
 	assertCNAME(t)
+	h.caPEM = ingressCA(ctx, t)
 
 	for _, serverURL := range serverURLs() {
 		for _, authRealm := range authRealms {
-			t.Run(strings.TrimPrefix(serverURL, "http://")+"/auth_realm="+authRealm, func(t *testing.T) {
+			name := strings.Replace(serverURL, "://", "/", 1) + "/auth_realm=" + authRealm
+			t.Run(name, func(t *testing.T) {
 				// Fresh admin client per run: the rotation subtest retires the seed secret.
 				h.setupKeycloak(ctx, t, authRealm)
 				h.setupVault(ctx, t, serverURL)
