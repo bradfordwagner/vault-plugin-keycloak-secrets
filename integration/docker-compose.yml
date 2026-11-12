@@ -58,7 +58,7 @@ services:
         ipv4_address: 172.30.53.53
 
   vault:
-    image: hashicorp/vault:${VAULT_VERSION:-2.2.1}
+    image: hashicorp/vault:${VAULT_VERSION:-2.2.2}
     command:
       - server
       - -dev
