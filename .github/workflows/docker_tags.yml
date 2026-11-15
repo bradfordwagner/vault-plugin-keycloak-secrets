@@ -11,7 +11,7 @@ on:
 env:
   image: ghcr.io/bradfordwagner/vault-plugin-keycloak-secrets
   # The owned Go builder used for the build stage. Pin to a real tag.
-  builder_image: ghcr.io/bradfordwagner/go-builder:1.26-ubuntu_noble
+  builder_image: ghcr.io/bradfordwagner/go-builder:1.27-ubuntu_noble
 jobs:
   build:
     runs-on: ${{ matrix.platform.runner }}
