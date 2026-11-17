@@ -37,7 +37,7 @@ services:
         ipv4_address: 172.30.53.10
 
   ingress:
-    image: caddy:2.10.2
+    image: caddy:2.11.9
     volumes:
       - ./ingress/Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
