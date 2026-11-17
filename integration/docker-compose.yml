@@ -49,7 +49,7 @@ services:
       - keycloak
 
   dns:
-    image: coredns/coredns:1.11.3
+    image: coredns/coredns:1.15.0
     command: ["-conf", "/etc/coredns/Corefile"]
     volumes:
       - ./dns:/etc/coredns:ro
